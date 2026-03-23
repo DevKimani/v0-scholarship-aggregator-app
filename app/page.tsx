@@ -120,7 +120,7 @@ function useSheetData() {
         setError(null);
       } catch (err) {
         console.error("Failed to load data:", err);
-        setError("Failed to load scholarships. Using sample data.");
+        setError("null");
         setScholarships(SAMPLE_SCHOLARSHIPS);
         setTips(SAMPLE_TIPS);
       } finally {
