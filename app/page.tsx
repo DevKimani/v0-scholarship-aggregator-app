@@ -423,7 +423,6 @@ export default function Page() {
     <div className="sh-wrap">
       <style>{S}</style>
       <Header page={page} setPage={setPage} />
-      {error && <div className="sh-container"><div className="sh-error">⚠️ {error}</div></div>}
       {renderPage()}
       <Foot setPage={setPage} />
     </div>
