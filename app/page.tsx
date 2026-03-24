@@ -12,6 +12,10 @@ const CONFIG = {
   TIPS_TAB: "tips",
   SITE_NAME: "KEScholarsHub",
   CACHE_MINUTES: 10,
+  // Paste your Apps Script Web App URL below:
+  NEWSLETTER_URL: "https://script.google.com/u/0/home/projects/1vwG3LQqhxgKYRNulvl6dGKBOpw7LGV-He3Pm0JfQ3Tb6bj95pMgVyrbn/edit",
+  // Number of scholarship detail views before showing signup
+  VIEWS_BEFORE_SIGNUP: 3,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -33,11 +37,36 @@ async function fetchSheetData(tabName: string) {
 
   const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tabName)}`;
   const response = await fetch(url);
+  
+  if (!response.ok) {
+    throw new Error(`Sheet fetch failed: ${response.status}`);
+  }
+  
   const text = await response.text();
-  const jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?/);
-  if (!jsonStr) throw new Error("Failed to parse Google Sheets response");
+  
+  // Try multiple patterns — Google's response format varies
+  let jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?/);
+  if (!jsonStr) {
+    jsonStr = text.match(/setResponse\(([\s\S]*)\);?/);
+  }
+  if (!jsonStr) {
+    // Try to extract JSON directly
+    const startIdx = text.indexOf('{"version"');
+    if (startIdx !== -1) {
+      const endIdx = text.lastIndexOf('}');
+      if (endIdx > startIdx) {
+        jsonStr = [text, text.substring(startIdx, endIdx + 1)];
+      }
+    }
+  }
+  if (!jsonStr) throw new Error("Failed to parse Google Sheets response for tab: " + tabName);
 
   const data = JSON.parse(jsonStr[1]);
+  
+  if (!data.table || !data.table.rows) {
+    return [];
+  }
+  
   const headers = data.table.cols.map((col: any) => col.label?.toLowerCase().trim() || "");
   const rows = data.table.rows.map((row: any) => {
     const obj: any = {};
@@ -107,25 +136,37 @@ function useSheetData() {
 
   useEffect(() => {
     async function load() {
+      setLoading(true);
+
+      // Fetch scholarships (primary — must work)
       try {
-        setLoading(true);
-        const [rawScholarships, rawTips] = await Promise.all([
-          fetchSheetData(CONFIG.SCHOLARSHIPS_TAB),
-          fetchSheetData(CONFIG.TIPS_TAB),
-        ]);
-        setScholarships(
-          rawScholarships.map(parseScholarship).filter((s: any) => s.status === "published" && s.title)
-        );
-        setTips(rawTips.map(parseTip).filter((t: any) => t.title));
-        setError(null);
+        const rawScholarships = await fetchSheetData(CONFIG.SCHOLARSHIPS_TAB);
+        const parsed = rawScholarships
+          .map(parseScholarship)
+          .filter((s: any) => s.status === "published" && s.title);
+        if (parsed.length > 0) {
+          setScholarships(parsed);
+        } else {
+          // Sheet connected but no published scholarships — show all
+          const all = rawScholarships.map(parseScholarship).filter((s: any) => s.title);
+          setScholarships(all.length > 0 ? all : SAMPLE_SCHOLARSHIPS);
+        }
       } catch (err) {
-        console.error("Failed to load data:", err);
-        setError("null");
+        console.error("Failed to load scholarships:", err);
         setScholarships(SAMPLE_SCHOLARSHIPS);
-        setTips(SAMPLE_TIPS);
-      } finally {
-        setLoading(false);
       }
+
+      // Fetch tips (secondary — OK if it fails)
+      try {
+        const rawTips = await fetchSheetData(CONFIG.TIPS_TAB);
+        const parsed = rawTips.map(parseTip).filter((t: any) => t.title);
+        setTips(parsed.length > 0 ? parsed : SAMPLE_TIPS);
+      } catch (err) {
+        console.error("Failed to load tips:", err);
+        setTips(SAMPLE_TIPS);
+      }
+
+      setLoading(false);
     }
     load();
   }, []);
@@ -167,7 +208,7 @@ const DEGREES = ["All", "Bachelors", "Masters", "PhD", "Masters/PhD"];
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const S = `@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600;700&display=swap');
-:root{--bg:#FDFAF6;--bg-warm:#F6F1EA;--bg-dark:#1C1814;--text:#1C1814;--text-mid:#52493D;--text-light:#8C8175;--accent:#C65D21;--accent-h:#A84B18;--accent-pale:#FBEEE4;--gold:#B8922F;--gold-light:#F9F0D9;--green:#2E7D5B;--green-light:#E3F5EC;--border:#E5DDD2;--card:#FFFFFF;--radius:12px;--max:1100px;--font-d:'Playfair Display',Georgia,serif;--font-b:'DM Sans',system-ui,sans-serif;--shadow-s:0 1px 4px rgba(28,24,20,0.05);--shadow-m:0 4px 20px rgba(28,24,20,0.07);--shadow-l:0 12px 40px rgba(28,24,20,0.1)}*{margin:0;padding:0;box-sizing:border-box}body,#root,.sh-wrap{background:var(--bg);color:var(--text);font-family:var(--font-b);font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}::selection{background:var(--accent-pale);color:var(--accent)}a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent-h)}.sh-header{background:rgba(255,255,255,0.92);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}.sh-header-in{max-width:var(--max);margin:0 auto;padding:0 20px;display:flex;align-items:center;justify-content:space-between;height:64px}.sh-logo{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}.sh-logo-mark{width:32px;height:32px;background:linear-gradient(135deg,var(--accent),var(--gold));border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;font-family:var(--font-d)}.sh-logo-text{font-family:var(--font-d);font-size:20px;font-weight:700;color:var(--text)}.sh-nav{display:flex;gap:4px;list-style:none}.sh-nav button{font-family:var(--font-b);font-size:13.5px;font-weight:500;color:var(--text-mid);padding:7px 14px;border-radius:8px;border:none;background:none;cursor:pointer;transition:all .15s}.sh-nav button:hover,.sh-nav button.on{color:var(--accent);background:var(--accent-pale)}.sh-mobile-btn{display:none;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text);padding:4px}.sh-hero{background:linear-gradient(165deg,#1C1814 0%,#32291E 48%,#4A3B2A 100%);color:#fff;padding:72px 20px 64px;text-align:center;position:relative;overflow:hidden}.sh-hero::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 25% 15%,rgba(198,93,33,0.12) 0%,transparent 55%),radial-gradient(ellipse at 75% 85%,rgba(184,146,47,0.08) 0%,transparent 45%);pointer-events:none}.sh-hero-in{position:relative;z-index:1;max-width:680px;margin:0 auto}.sh-hero h1{font-family:var(--font-d);font-size:clamp(28px,4.8vw,46px);font-weight:700;line-height:1.18;margin-bottom:16px;letter-spacing:-0.3px}.sh-hero h1 em{color:var(--gold);font-style:normal}.sh-hero p{font-size:16.5px;color:rgba(255,255,255,0.72);max-width:520px;margin:0 auto 28px;line-height:1.55}.sh-hero-search{display:flex;max-width:480px;margin:0 auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:50px;overflow:hidden;backdrop-filter:blur(8px)}.sh-hero-search input{flex:1;background:transparent;border:none;padding:13px 22px;color:#fff;font-size:14px;font-family:var(--font-b);outline:none}.sh-hero-search input::placeholder{color:rgba(255,255,255,0.42)}.sh-hero-search button{background:var(--accent);color:#fff;border:none;padding:13px 26px;font-family:var(--font-b);font-weight:600;font-size:13.5px;cursor:pointer;transition:background .15s}.sh-hero-search button:hover{background:var(--accent-h)}.sh-hero-stats{display:flex;justify-content:center;gap:40px;margin-top:36px}.sh-hero-stats div{text-align:center}.sh-hero-stats strong{font-family:var(--font-d);font-size:26px;display:block;color:var(--gold)}.sh-hero-stats span{font-size:11.5px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:1.2px}.sh-container{max-width:var(--max);margin:0 auto;padding:0 20px}.sh-section-head{display:flex;align-items:baseline;justify-content:space-between;margin:48px 0 22px;padding-bottom:14px;border-bottom:2px solid var(--border)}.sh-section-head h2{font-family:var(--font-d);font-size:24px;font-weight:600}.sh-section-head button{font-size:13px;font-weight:600;color:var(--accent);background:none;border:none;cursor:pointer;font-family:var(--font-b)}.sh-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px 26px;transition:all .2s;cursor:pointer;position:relative}.sh-card:hover{box-shadow:var(--shadow-m);border-color:rgba(198,93,33,0.18);transform:translateY(-1px)}.sh-card.feat{border-left:4px solid var(--gold)}.sh-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:8px}.sh-card-title{font-family:var(--font-d);font-size:17.5px;font-weight:600;color:var(--text);line-height:1.32}.sh-card-provider{font-size:13px;color:var(--text-light);font-style:italic;margin-top:4px}.sh-card-tags{display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap}.sh-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;padding:3px 9px;border-radius:20px}.sh-tag-ff{background:var(--green-light);color:var(--green)}.sh-tag-pf{background:#FFF3CD;color:#856404}.sh-card-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:12.5px;color:var(--text-mid);margin-top:10px}.sh-card-meta span{display:flex;align-items:center;gap:4px}.sh-card-summary{font-size:13.5px;color:var(--text-mid);margin-top:12px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.sh-card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}.sh-card-date{font-size:11px;color:var(--text-light)}.sh-card-more{font-size:12.5px;font-weight:600;color:var(--accent)}.sh-grid{display:grid;gap:16px}.sh-countries{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}.sh-country{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 12px;text-align:center;cursor:pointer;transition:all .2s}.sh-country:hover{box-shadow:var(--shadow-m);transform:translateY(-2px);border-color:var(--accent)}.sh-country-flag{font-size:32px;margin-bottom:6px}.sh-country-name{font-family:var(--font-d);font-size:14.5px;font-weight:600}.sh-country-count{font-size:11.5px;color:var(--text-light);margin-top:1px}.sh-tips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}.sh-tip{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;cursor:pointer;transition:all .2s}.sh-tip:hover{box-shadow:var(--shadow-m);transform:translateY(-2px)}.sh-tip-cat{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:8px}.sh-tip-title{font-family:var(--font-d);font-size:16.5px;font-weight:600;line-height:1.32;margin-bottom:8px}.sh-tip-excerpt{font-size:13px;color:var(--text-mid);line-height:1.55;margin-bottom:12px}.sh-tip-meta{font-size:11.5px;color:var(--text-light);display:flex;gap:12px}.sh-filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:24px 0 20px;padding:16px 20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)}.sh-filters label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.5px}.sh-filters select,.sh-filters input{font-family:var(--font-b);font-size:13px;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);outline:none;cursor:pointer}.sh-filters select:focus,.sh-filters input:focus{border-color:var(--accent)}.sh-search-wrap{flex:1;min-width:180px;position:relative}.sh-search-wrap input{width:100%;padding-left:34px}.sh-search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-light)}.sh-result-count{font-size:13px;color:var(--text-light);margin-bottom:16px}.sh-detail{max-width:740px;margin:0 auto;padding:40px 20px 72px}.sh-back{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:500;color:var(--text-light);cursor:pointer;margin-bottom:24px;border:none;background:none;font-family:var(--font-b)}.sh-back:hover{color:var(--accent)}.sh-detail-title{font-family:var(--font-d);font-size:clamp(24px,3.8vw,34px);font-weight:700;line-height:1.22;margin-bottom:10px}.sh-detail-provider{font-size:15px;color:var(--text-light);font-style:italic;margin-bottom:22px}.sh-detail-meta{display:flex;flex-wrap:wrap;gap:18px;padding:16px 20px;background:var(--bg-warm);border-radius:var(--radius);margin-bottom:28px;font-size:13px}.sh-detail-meta>div{display:flex;flex-direction:column;gap:1px}.sh-detail-meta .lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--text-light)}.sh-detail-meta .val{font-weight:600;color:var(--text)}.sh-detail h3{font-family:var(--font-d);font-size:18px;font-weight:600;margin:24px 0 10px}.sh-detail p{font-size:14.5px;color:var(--text-mid);line-height:1.65;margin-bottom:12px}.sh-detail ul{list-style:none;padding:0}.sh-detail li{font-size:14px;color:var(--text-mid);padding:6px 0 6px 20px;position:relative}.sh-detail li::before{content:'';position:absolute;left:0;top:12px;width:7px;height:7px;border-radius:50%;background:var(--accent-pale);border:2px solid var(--accent)}.sh-apply-btn{display:inline-flex;align-items:center;gap:7px;background:var(--accent);color:#fff;font-family:var(--font-b);font-weight:600;font-size:14px;padding:12px 28px;border:none;border-radius:50px;cursor:pointer;transition:all .15s;margin-top:8px}.sh-apply-btn:hover{background:var(--accent-h);transform:translateY(-1px);box-shadow:var(--shadow-m)}.sh-article h2{font-family:var(--font-d);font-size:18px;font-weight:600;margin:24px 0 8px;color:var(--text)}.sh-article p{font-size:14.5px;color:var(--text-mid);line-height:1.65;margin-bottom:14px}.sh-newsletter{background:linear-gradient(135deg,#1C1814,#32291E);border-radius:var(--radius);padding:36px;margin:48px 0;display:flex;align-items:center;justify-content:space-between;gap:28px;color:#fff}.sh-newsletter h3{font-family:var(--font-d);font-size:20px;font-weight:600;margin-bottom:4px}.sh-newsletter p{font-size:13px;color:rgba(255,255,255,0.6)}.sh-nl-form{display:flex;gap:8px;flex-shrink:0}.sh-nl-form input{padding:11px 16px;border:1px solid rgba(255,255,255,0.18);border-radius:8px;background:rgba(255,255,255,0.08);color:#fff;font-family:var(--font-b);font-size:13px;width:240px;outline:none}.sh-nl-form input::placeholder{color:rgba(255,255,255,0.35)}.sh-nl-form button{padding:11px 22px;background:var(--gold);color:var(--bg-dark);border:none;border-radius:8px;font-family:var(--font-b);font-weight:600;font-size:13px;cursor:pointer;transition:background .15s}.sh-nl-form button:hover{background:#CBA235}.sh-footer{background:var(--bg-dark);color:rgba(255,255,255,0.55);padding:48px 20px 28px;margin-top:72px}.sh-footer-in{max-width:var(--max);margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:36px}.sh-footer h4{font-family:var(--font-d);font-size:17px;color:#fff;margin-bottom:10px}.sh-footer h5{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:rgba(255,255,255,0.35);margin-bottom:12px}.sh-footer ul{list-style:none}.sh-footer li{margin-bottom:6px}.sh-footer a{font-size:13px;color:rgba(255,255,255,0.55);cursor:pointer}.sh-footer a:hover{color:var(--gold)}.sh-footer-bot{max-width:var(--max);margin:32px auto 0;padding-top:20px;border-top:1px solid rgba(255,255,255,0.08);text-align:center;font-size:12px}.sh-footer p{font-size:13px;line-height:1.55}.sh-pages{display:flex;justify-content:center;gap:5px;margin-top:32px}.sh-page-btn{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--card);font-family:var(--font-b);font-size:13px;color:var(--text-mid);cursor:pointer;transition:all .15s}.sh-page-btn:hover{border-color:var(--accent);color:var(--accent)}.sh-page-btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}.sh-about{max-width:680px;margin:0 auto;padding:48px 20px 72px}.sh-about h1{font-family:var(--font-d);font-size:34px;font-weight:700;margin-bottom:20px}.sh-about h2{font-family:var(--font-d);font-size:20px;font-weight:600;margin:30px 0 10px}.sh-about p{font-size:15px;color:var(--text-mid);line-height:1.7;margin-bottom:14px}.sh-loading{text-align:center;padding:80px 20px;color:var(--text-light)}.sh-loading-spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}@keyframes spin{to{transform:rotate(360deg)}}.sh-error{background:#FFF3CD;border:1px solid #FFECB5;border-radius:8px;padding:12px 16px;font-size:13px;color:#856404;margin:16px 0}@media(max-width:768px){.sh-nav{display:none}.sh-nav.open{display:flex;flex-direction:column;position:absolute;top:64px;left:0;right:0;background:var(--card);border-bottom:1px solid var(--border);padding:10px;box-shadow:var(--shadow-l);z-index:99}.sh-mobile-btn{display:block}.sh-hero{padding:48px 16px 40px}.sh-hero-stats{gap:20px}.sh-hero-stats strong{font-size:20px}.sh-filters{flex-direction:column;align-items:stretch}.sh-footer-in{grid-template-columns:1fr;gap:24px}.sh-newsletter{flex-direction:column;text-align:center}.sh-nl-form{flex-direction:column;width:100%}.sh-nl-form input{width:100%}.sh-tips-grid{grid-template-columns:1fr}.sh-countries{grid-template-columns:repeat(auto-fill,minmax(100px,1fr))}}`;
+:root{--bg:#FDFAF6;--bg-warm:#F6F1EA;--bg-dark:#1C1814;--text:#1C1814;--text-mid:#52493D;--text-light:#8C8175;--accent:#C65D21;--accent-h:#A84B18;--accent-pale:#FBEEE4;--gold:#B8922F;--gold-light:#F9F0D9;--green:#2E7D5B;--green-light:#E3F5EC;--border:#E5DDD2;--card:#FFFFFF;--radius:12px;--max:1100px;--font-d:'Playfair Display',Georgia,serif;--font-b:'DM Sans',system-ui,sans-serif;--shadow-s:0 1px 4px rgba(28,24,20,0.05);--shadow-m:0 4px 20px rgba(28,24,20,0.07);--shadow-l:0 12px 40px rgba(28,24,20,0.1)}*{margin:0;padding:0;box-sizing:border-box}body,#root,.sh-wrap{background:var(--bg);color:var(--text);font-family:var(--font-b);font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}::selection{background:var(--accent-pale);color:var(--accent)}a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent-h)}.sh-header{background:rgba(255,255,255,0.92);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}.sh-header-in{max-width:var(--max);margin:0 auto;padding:0 20px;display:flex;align-items:center;justify-content:space-between;height:64px}.sh-logo{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}.sh-logo-mark{width:32px;height:32px;background:linear-gradient(135deg,var(--accent),var(--gold));border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;font-family:var(--font-d)}.sh-logo-text{font-family:var(--font-d);font-size:20px;font-weight:700;color:var(--text)}.sh-nav{display:flex;gap:4px;list-style:none}.sh-nav button{font-family:var(--font-b);font-size:13.5px;font-weight:500;color:var(--text-mid);padding:7px 14px;border-radius:8px;border:none;background:none;cursor:pointer;transition:all .15s}.sh-nav button:hover,.sh-nav button.on{color:var(--accent);background:var(--accent-pale)}.sh-mobile-btn{display:none;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text);padding:4px}.sh-hero{background:linear-gradient(165deg,#1C1814 0%,#32291E 48%,#4A3B2A 100%);color:#fff;padding:72px 20px 64px;text-align:center;position:relative;overflow:hidden}.sh-hero::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 25% 15%,rgba(198,93,33,0.12) 0%,transparent 55%),radial-gradient(ellipse at 75% 85%,rgba(184,146,47,0.08) 0%,transparent 45%);pointer-events:none}.sh-hero-in{position:relative;z-index:1;max-width:680px;margin:0 auto}.sh-hero h1{font-family:var(--font-d);font-size:clamp(28px,4.8vw,46px);font-weight:700;line-height:1.18;margin-bottom:16px;letter-spacing:-0.3px}.sh-hero h1 em{color:var(--gold);font-style:normal}.sh-hero p{font-size:16.5px;color:rgba(255,255,255,0.72);max-width:520px;margin:0 auto 28px;line-height:1.55}.sh-hero-search{display:flex;max-width:480px;margin:0 auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:50px;overflow:hidden;backdrop-filter:blur(8px)}.sh-hero-search input{flex:1;background:transparent;border:none;padding:13px 22px;color:#fff;font-size:14px;font-family:var(--font-b);outline:none}.sh-hero-search input::placeholder{color:rgba(255,255,255,0.42)}.sh-hero-search button{background:var(--accent);color:#fff;border:none;padding:13px 26px;font-family:var(--font-b);font-weight:600;font-size:13.5px;cursor:pointer;transition:background .15s}.sh-hero-search button:hover{background:var(--accent-h)}.sh-hero-stats{display:flex;justify-content:center;gap:40px;margin-top:36px}.sh-hero-stats div{text-align:center}.sh-hero-stats strong{font-family:var(--font-d);font-size:26px;display:block;color:var(--gold)}.sh-hero-stats span{font-size:11.5px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:1.2px}.sh-container{max-width:var(--max);margin:0 auto;padding:0 20px}.sh-section-head{display:flex;align-items:baseline;justify-content:space-between;margin:48px 0 22px;padding-bottom:14px;border-bottom:2px solid var(--border)}.sh-section-head h2{font-family:var(--font-d);font-size:24px;font-weight:600}.sh-section-head button{font-size:13px;font-weight:600;color:var(--accent);background:none;border:none;cursor:pointer;font-family:var(--font-b)}.sh-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px 26px;transition:all .2s;cursor:pointer;position:relative}.sh-card:hover{box-shadow:var(--shadow-m);border-color:rgba(198,93,33,0.18);transform:translateY(-1px)}.sh-card.feat{border-left:4px solid var(--gold)}.sh-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:8px}.sh-card-title{font-family:var(--font-d);font-size:17.5px;font-weight:600;color:var(--text);line-height:1.32}.sh-card-provider{font-size:13px;color:var(--text-light);font-style:italic;margin-top:4px}.sh-card-tags{display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap}.sh-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;padding:3px 9px;border-radius:20px}.sh-tag-ff{background:var(--green-light);color:var(--green)}.sh-tag-pf{background:#FFF3CD;color:#856404}.sh-card-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:12.5px;color:var(--text-mid);margin-top:10px}.sh-card-meta span{display:flex;align-items:center;gap:4px}.sh-card-summary{font-size:13.5px;color:var(--text-mid);margin-top:12px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.sh-card-foot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}.sh-card-date{font-size:11px;color:var(--text-light)}.sh-card-more{font-size:12.5px;font-weight:600;color:var(--accent)}.sh-grid{display:grid;gap:16px}.sh-countries{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}.sh-country{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 12px;text-align:center;cursor:pointer;transition:all .2s}.sh-country:hover{box-shadow:var(--shadow-m);transform:translateY(-2px);border-color:var(--accent)}.sh-country-flag{font-size:32px;margin-bottom:6px}.sh-country-name{font-family:var(--font-d);font-size:14.5px;font-weight:600}.sh-country-count{font-size:11.5px;color:var(--text-light);margin-top:1px}.sh-tips-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}.sh-tip{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;cursor:pointer;transition:all .2s}.sh-tip:hover{box-shadow:var(--shadow-m);transform:translateY(-2px)}.sh-tip-cat{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:8px}.sh-tip-title{font-family:var(--font-d);font-size:16.5px;font-weight:600;line-height:1.32;margin-bottom:8px}.sh-tip-excerpt{font-size:13px;color:var(--text-mid);line-height:1.55;margin-bottom:12px}.sh-tip-meta{font-size:11.5px;color:var(--text-light);display:flex;gap:12px}.sh-filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:24px 0 20px;padding:16px 20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)}.sh-filters label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.5px}.sh-filters select,.sh-filters input{font-family:var(--font-b);font-size:13px;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);outline:none;cursor:pointer}.sh-filters select:focus,.sh-filters input:focus{border-color:var(--accent)}.sh-search-wrap{flex:1;min-width:180px;position:relative}.sh-search-wrap input{width:100%;padding-left:34px}.sh-search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-light)}.sh-result-count{font-size:13px;color:var(--text-light);margin-bottom:16px}.sh-detail{max-width:740px;margin:0 auto;padding:40px 20px 72px}.sh-back{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:500;color:var(--text-light);cursor:pointer;margin-bottom:24px;border:none;background:none;font-family:var(--font-b)}.sh-back:hover{color:var(--accent)}.sh-detail-title{font-family:var(--font-d);font-size:clamp(24px,3.8vw,34px);font-weight:700;line-height:1.22;margin-bottom:10px}.sh-detail-provider{font-size:15px;color:var(--text-light);font-style:italic;margin-bottom:22px}.sh-detail-meta{display:flex;flex-wrap:wrap;gap:18px;padding:16px 20px;background:var(--bg-warm);border-radius:var(--radius);margin-bottom:28px;font-size:13px}.sh-detail-meta>div{display:flex;flex-direction:column;gap:1px}.sh-detail-meta .lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--text-light)}.sh-detail-meta .val{font-weight:600;color:var(--text)}.sh-detail h3{font-family:var(--font-d);font-size:18px;font-weight:600;margin:24px 0 10px}.sh-detail p{font-size:14.5px;color:var(--text-mid);line-height:1.65;margin-bottom:12px}.sh-detail ul{list-style:none;padding:0}.sh-detail li{font-size:14px;color:var(--text-mid);padding:6px 0 6px 20px;position:relative}.sh-detail li::before{content:'';position:absolute;left:0;top:12px;width:7px;height:7px;border-radius:50%;background:var(--accent-pale);border:2px solid var(--accent)}.sh-apply-btn{display:inline-flex;align-items:center;gap:7px;background:var(--accent);color:#fff;font-family:var(--font-b);font-weight:600;font-size:14px;padding:12px 28px;border:none;border-radius:50px;cursor:pointer;transition:all .15s;margin-top:8px}.sh-apply-btn:hover{background:var(--accent-h);transform:translateY(-1px);box-shadow:var(--shadow-m)}.sh-article h2{font-family:var(--font-d);font-size:18px;font-weight:600;margin:24px 0 8px;color:var(--text)}.sh-article p{font-size:14.5px;color:var(--text-mid);line-height:1.65;margin-bottom:14px}.sh-newsletter{background:linear-gradient(135deg,#1C1814,#32291E);border-radius:var(--radius);padding:36px;margin:48px 0;display:flex;align-items:center;justify-content:space-between;gap:28px;color:#fff}.sh-newsletter h3{font-family:var(--font-d);font-size:20px;font-weight:600;margin-bottom:4px}.sh-newsletter p{font-size:13px;color:rgba(255,255,255,0.6)}.sh-nl-form{display:flex;gap:8px;flex-shrink:0}.sh-nl-form input{padding:11px 16px;border:1px solid rgba(255,255,255,0.18);border-radius:8px;background:rgba(255,255,255,0.08);color:#fff;font-family:var(--font-b);font-size:13px;width:240px;outline:none}.sh-nl-form input::placeholder{color:rgba(255,255,255,0.35)}.sh-nl-form button{padding:11px 22px;background:var(--gold);color:var(--bg-dark);border:none;border-radius:8px;font-family:var(--font-b);font-weight:600;font-size:13px;cursor:pointer;transition:background .15s}.sh-nl-form button:hover{background:#CBA235}.sh-footer{background:var(--bg-dark);color:rgba(255,255,255,0.55);padding:48px 20px 28px;margin-top:72px}.sh-footer-in{max-width:var(--max);margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:36px}.sh-footer h4{font-family:var(--font-d);font-size:17px;color:#fff;margin-bottom:10px}.sh-footer h5{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:rgba(255,255,255,0.35);margin-bottom:12px}.sh-footer ul{list-style:none}.sh-footer li{margin-bottom:6px}.sh-footer a{font-size:13px;color:rgba(255,255,255,0.55);cursor:pointer}.sh-footer a:hover{color:var(--gold)}.sh-footer-bot{max-width:var(--max);margin:32px auto 0;padding-top:20px;border-top:1px solid rgba(255,255,255,0.08);text-align:center;font-size:12px}.sh-footer p{font-size:13px;line-height:1.55}.sh-pages{display:flex;justify-content:center;gap:5px;margin-top:32px}.sh-page-btn{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:8px;background:var(--card);font-family:var(--font-b);font-size:13px;color:var(--text-mid);cursor:pointer;transition:all .15s}.sh-page-btn:hover{border-color:var(--accent);color:var(--accent)}.sh-page-btn.on{background:var(--accent);color:#fff;border-color:var(--accent)}.sh-about{max-width:680px;margin:0 auto;padding:48px 20px 72px}.sh-about h1{font-family:var(--font-d);font-size:34px;font-weight:700;margin-bottom:20px}.sh-about h2{font-family:var(--font-d);font-size:20px;font-weight:600;margin:30px 0 10px}.sh-about p{font-size:15px;color:var(--text-mid);line-height:1.7;margin-bottom:14px}.sh-loading{text-align:center;padding:80px 20px;color:var(--text-light)}.sh-loading-spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}@keyframes spin{to{transform:rotate(360deg)}}.sh-error{background:#FFF3CD;border:1px solid #FFECB5;border-radius:8px;padding:12px 16px;font-size:13px;color:#856404;margin:16px 0}@media(max-width:768px){.sh-nav{display:none}.sh-nav.open{display:flex;flex-direction:column;position:absolute;top:64px;left:0;right:0;background:var(--card);border-bottom:1px solid var(--border);padding:10px;box-shadow:var(--shadow-l);z-index:99}.sh-mobile-btn{display:block}.sh-hero{padding:48px 16px 40px}.sh-hero-stats{gap:20px}.sh-hero-stats strong{font-size:20px}.sh-filters{flex-direction:column;align-items:stretch}.sh-footer-in{grid-template-columns:1fr;gap:24px}.sh-newsletter{flex-direction:column;text-align:center}.sh-nl-form{flex-direction:column;width:100%}.sh-nl-form input{width:100%}.sh-tips-grid{grid-template-columns:1fr}.sh-countries{grid-template-columns:repeat(auto-fill,minmax(100px,1fr))}}.sh-modal-overlay{position:fixed;inset:0;background:rgba(28,24,20,0.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px}.sh-modal{background:var(--card);border-radius:16px;padding:40px 36px;max-width:420px;width:100%;text-align:center;box-shadow:var(--shadow-l);animation:modalIn .3s ease}.sh-modal-badge{font-size:48px;margin-bottom:12px}.sh-modal-title{font-family:var(--font-d);font-size:24px;font-weight:700;color:var(--text);margin-bottom:8px}.sh-modal-text{font-size:14px;color:var(--text-mid);line-height:1.55;margin-bottom:24px}.sh-modal-form{display:flex;flex-direction:column;gap:10px}.sh-modal-input{width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:8px;font-family:var(--font-b);font-size:14px;color:var(--text);outline:none;background:var(--bg)}.sh-modal-input:focus{border-color:var(--accent)}.sh-modal-btn{width:100%;padding:13px;background:var(--accent);color:#fff;border:none;border-radius:50px;font-family:var(--font-b);font-weight:600;font-size:15px;cursor:pointer;transition:all .15s}.sh-modal-btn:hover{background:var(--accent-h)}.sh-modal-btn:disabled{opacity:.6}.sh-modal-skip{background:none;border:none;color:var(--text-light);font-family:var(--font-b);font-size:13px;cursor:pointer;padding:8px;margin-top:4px}.sh-modal-skip:hover{color:var(--accent)}@keyframes modalIn{from{opacity:0;transform:scale(0.95)}to{opacity:1;transform:scale(1)}}`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPONENTS
@@ -244,18 +285,98 @@ function ScholarshipCard({ s, onClick }: { s: any; onClick: () => void }) {
   );
 }
 
-function Newsletter() {
+function Newsletter({ onSubscribed }: { onSubscribed?: () => void }) {
   const [email, setEmail] = useState("");
-  const [done, setDone] = useState(false);
+  const [name, setName] = useState("");
+  const [status, setStatus] = useState<"idle"|"loading"|"done"|"error">("idle");
+  const [msg, setMsg] = useState("");
+
+  async function handleSubscribe() {
+    if (!email || !email.includes("@")) { setStatus("error"); setMsg("Please enter a valid email."); return; }
+    setStatus("loading");
+    try {
+      if (CONFIG.NEWSLETTER_URL && !CONFIG.NEWSLETTER_URL.includes("YOUR_")) {
+        await fetch(CONFIG.NEWSLETTER_URL, {
+          method: "POST", mode: "no-cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, name }),
+        });
+      }
+      setStatus("done");
+      setMsg("You're subscribed! Check your inbox.");
+      try { localStorage.setItem("sh_subscribed", "true"); } catch(e) {}
+      if (onSubscribed) onSubscribed();
+    } catch (err) {
+      setStatus("done");
+      setMsg("Thanks for subscribing!");
+      try { localStorage.setItem("sh_subscribed", "true"); } catch(e) {}
+      if (onSubscribed) onSubscribed();
+    }
+  }
+
   return (
     <div className="sh-newsletter">
       <div><h3>Stay Updated</h3><p>Get new scholarship opportunities delivered to your inbox every week.</p></div>
-      {done ? <p style={{color:"var(--gold)",fontWeight:600}}>Thank you for subscribing!</p> : (
+      {status === "done" ? <p style={{color:"var(--gold)",fontWeight:600}}>{msg}</p> : (
         <div className="sh-nl-form">
-          <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="your@email.com" onKeyDown={e=>e.key==="Enter"&&email.includes("@")&&setDone(true)} />
-          <button onClick={()=>{if(email.includes("@"))setDone(true)}}>Subscribe</button>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name (optional)" style={{width:180}} />
+          <input value={email} onChange={e=>{setEmail(e.target.value);if(status==="error")setStatus("idle");}} placeholder="your@email.com" onKeyDown={e=>e.key==="Enter"&&handleSubscribe()} />
+          <button onClick={handleSubscribe} disabled={status==="loading"}>
+            {status==="loading" ? "..." : "Subscribe"}
+          </button>
         </div>
       )}
+      {status==="error" && <p style={{color:"#ff6b6b",fontSize:12,marginTop:8,textAlign:"right"}}>{msg}</p>}
+    </div>
+  );
+}
+
+function SignupGate({ onClose }: { onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [status, setStatus] = useState<"idle"|"loading"|"done">("idle");
+
+  async function handleSubmit() {
+    if (!email || !email.includes("@")) return;
+    setStatus("loading");
+    try {
+      if (CONFIG.NEWSLETTER_URL && !CONFIG.NEWSLETTER_URL.includes("YOUR_")) {
+        await fetch(CONFIG.NEWSLETTER_URL, {
+          method: "POST", mode: "no-cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, name }),
+        });
+      }
+    } catch(e) {}
+    try { localStorage.setItem("sh_subscribed", "true"); } catch(e) {}
+    setStatus("done");
+    setTimeout(onClose, 1500);
+  }
+
+  return (
+    <div className="sh-modal-overlay">
+      <div className="sh-modal">
+        <div className="sh-modal-badge">🎓</div>
+        <h2 className="sh-modal-title">You&apos;re on a roll!</h2>
+        <p className="sh-modal-text">
+          Sign up for free to keep browsing scholarships and get weekly updates on new opportunities.
+        </p>
+        {status === "done" ? (
+          <div style={{textAlign:"center",padding:"16px 0"}}>
+            <p style={{color:"var(--green)",fontWeight:600,fontSize:18}}>✓ You&apos;re in!</p>
+            <p style={{color:"var(--text-light)",fontSize:13,marginTop:4}}>Redirecting...</p>
+          </div>
+        ) : (
+          <div className="sh-modal-form">
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name (optional)" className="sh-modal-input" />
+            <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="your@email.com" className="sh-modal-input" onKeyDown={e=>e.key==="Enter"&&handleSubmit()} />
+            <button onClick={handleSubmit} disabled={status==="loading"} className="sh-modal-btn">
+              {status==="loading" ? "Signing up..." : "Sign Up Free"}
+            </button>
+            <button onClick={onClose} className="sh-modal-skip">Maybe later</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -406,25 +527,58 @@ export default function Page() {
   const [page, setPage] = useState("home");
   const [initSearch, setInitSearch] = useState("");
   const [countryFilter, setCountryFilter] = useState("");
+  const [viewCount, setViewCount] = useState(0);
+  const [showSignupGate, setShowSignupGate] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
 
-  if (loading) return (<div className="sh-wrap"><style>{S}</style><Header page="home" setPage={setPage} /><div className="sh-loading"><div className="sh-loading-spinner" /><p>Loading scholarships...</p></div></div>);
+  // Check if already subscribed on mount
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("sh_subscribed") === "true") setIsSubscribed(true);
+      const saved = parseInt(localStorage.getItem("sh_views") || "0");
+      setViewCount(saved);
+    } catch(e) {}
+  }, []);
+
+  // Track detail views and show gate after threshold
+  function handlePageChange(newPage: string) {
+    if (newPage.startsWith("detail:") && !isSubscribed) {
+      const newCount = viewCount + 1;
+      setViewCount(newCount);
+      try { localStorage.setItem("sh_views", String(newCount)); } catch(e) {}
+      if (newCount >= CONFIG.VIEWS_BEFORE_SIGNUP) {
+        setShowSignupGate(true);
+        return; // Don't navigate yet — show gate first
+      }
+    }
+    setPage(newPage);
+    window.scrollTo(0, 0);
+  }
+
+  function handleGateClose() {
+    setShowSignupGate(false);
+    setIsSubscribed(true);
+  }
+
+  if (loading) return (<div className="sh-wrap"><style>{S}</style><Header page="home" setPage={(p: string) => { setPage(p); window.scrollTo(0,0); }} /><div className="sh-loading"><div className="sh-loading-spinner" /><p>Loading scholarships...</p></div></div>);
 
   const renderPage = () => {
-    if (page==="home") return <HomePage scholarships={scholarships} tips={tips} setPage={setPage} setInitSearch={setInitSearch} setCountryFilter={setCountryFilter} />;
-    if (page==="scholarships") return <ScholarshipsPage scholarships={scholarships} setPage={setPage} initSearch={initSearch} countryFilter={countryFilter} setCountryFilter={setCountryFilter} />;
-    if (page==="tips") return <TipsPage tips={tips} setPage={setPage} />;
+    if (page==="home") return <HomePage scholarships={scholarships} tips={tips} setPage={handlePageChange} setInitSearch={setInitSearch} setCountryFilter={setCountryFilter} />;
+    if (page==="scholarships") return <ScholarshipsPage scholarships={scholarships} setPage={handlePageChange} initSearch={initSearch} countryFilter={countryFilter} setCountryFilter={setCountryFilter} />;
+    if (page==="tips") return <TipsPage tips={tips} setPage={handlePageChange} />;
     if (page==="about") return <AboutPage />;
     if (page.startsWith("detail:")) return <DetailPage scholarships={scholarships} slug={page.replace("detail:","")} goBack={()=>{setPage("scholarships");window.scrollTo(0,0);}} />;
     if (page.startsWith("tip:")) return <TipDetailPage tips={tips} slug={page.replace("tip:","")} goBack={()=>{setPage("tips");window.scrollTo(0,0);}} />;
-    return <HomePage scholarships={scholarships} tips={tips} setPage={setPage} setInitSearch={setInitSearch} setCountryFilter={setCountryFilter} />;
+    return <HomePage scholarships={scholarships} tips={tips} setPage={handlePageChange} setInitSearch={setInitSearch} setCountryFilter={setCountryFilter} />;
   };
 
   return (
     <div className="sh-wrap">
       <style>{S}</style>
-      <Header page={page} setPage={setPage} />
+      <Header page={page} setPage={(p: string) => { setPage(p); window.scrollTo(0,0); }} />
       {renderPage()}
-      <Foot setPage={setPage} />
+      <Foot setPage={(p: string) => { setPage(p); window.scrollTo(0,0); }} />
+      {showSignupGate && <SignupGate onClose={handleGateClose} />}
     </div>
   );
 }
