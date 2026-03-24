@@ -13,7 +13,7 @@ const CONFIG = {
   SITE_NAME: "KEScholarsHub",
   CACHE_MINUTES: 10,
   // Paste your Apps Script Web App URL below:
-  NEWSLETTER_URL: "https://script.google.com/u/0/home/projects/1vwG3LQqhxgKYRNulvl6dGKBOpw7LGV-He3Pm0JfQ3Tb6bj95pMgVyrbn/edit",
+  NEWSLETTER_URL: "https://script.google.com/macros/s/AKfycbwD9mmugEs6A5kzpZ1Ol7Uqt79riFkW5_bJr-UKjzaWY9pr7EtPLcY2Vv9kxNnmDMGA7Q/exec",
   // Number of scholarship detail views before showing signup
   VIEWS_BEFORE_SIGNUP: 3,
 };
